@@ -2,7 +2,7 @@
 import functools
 import logging
 import os
-import shutil
+import pickle
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -63,6 +63,59 @@ def checkpoint(func=None):
         return decorator
     else:
         return decorator(func)
+
+
+def checkpoint_with_data(cache_dir="./cache"):
+    cache_path = Path(cache_dir)
+    cache_path.mkdir(exist_ok=True)
+
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            module = func.__module__
+            name = func.__name__
+            state = load_state()
+            module_state = state.get(module, {})
+
+            # completed ? return cached data
+            if module_state.get(name, False):
+                cache_file = cache_path / f"{module}.{name}.pkl"
+                if cache_file.exists():
+                    logger.info(f"Loading cached data for {module}.{name}")
+                    with open(cache_file, "rb") as f:
+                        return pickle.load(f)
+                else:
+                    logger.warning(f"Checkpoint exists but no cached data for {module}.{name}, re-running")
+
+            # run
+            result = func(*args, **kwargs)
+
+            # save
+            cache_file = cache_path / f"{module}.{name}.pkl"
+            with open(cache_file, "wb") as f:
+                pickle.dump(result, f)
+            # mark as complete
+            module_state[name] = get_legible_timestamp()
+            state[module] = module_state
+            save_state(state)
+
+            return result
+
+        return wrapper
+
+    return decorator
+
+
+def get_checkpoint_data(module, name, cache_dir="./cache"):
+    cache_path = Path(cache_dir)
+    cache_file = cache_path / f"{module}.{name}.pkl"
+    if cache_file.exists():
+        logger.info(f"Loading cached data for {module}.{name}")
+        with open(cache_file, "rb") as f:
+            return pickle.load(f)
+    else:
+        logger.warning(f"No cached data for {module}.{name}")
+        return None
 
 
 def cleanup():
